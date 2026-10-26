@@ -1,0 +1,50 @@
+{
+  "name": "moneymind-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MoneyMind AI — an AI-powered personal finance workspace.",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "dev": "npm run build -w @moneymind/shared && concurrently -k -n shared,api,web -c green,cyan,magenta \"npm:dev:shared\" \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:shared": "npm run dev -w @moneymind/shared",
+    "dev:api": "npm run dev -w @moneymind/api",
+    "dev:web": "npm run dev -w @moneymind/web",
+    "build": "npm run build -w @moneymind/shared && npm run build -w @moneymind/api && npm run build -w @moneymind/web",
+    "typecheck": "npm run build -w @moneymind/shared && npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build -w @moneymind/shared && npm run test --workspaces --if-present",
+    "test:coverage": "npm run build -w @moneymind/shared && npm run test:coverage --workspaces --if-present",
+    "clean": "node scripts/clean.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "concurrently": "^10.0.6",
+    "deepmerge-ts": "^8.0.2",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "typescript": "5.9",
+    "typescript-eslint": "^8.72.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
+  },
+  "dependencies": {
+    "@types/multer": "^2.3.0",
+    "multer": "^2.5.0"
+  }
+}

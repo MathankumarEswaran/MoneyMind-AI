@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+# Authenticated application routes contain no public content.
+Disallow: /dashboard
+Disallow: /login

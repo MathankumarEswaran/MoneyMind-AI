@@ -1,0 +1,236 @@
+// MoneyMind AI — Phase 3 persistence.
+// Money is never stored as a float: every amount is BIGINT minor units plus an
+// ISO 4217 currency code, matching the shared contract.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum CategoryKind {
+  INCOME
+  EXPENSE
+}
+
+enum GoalStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+model User {
+  id              String   @id @default(uuid(7)) @db.Uuid
+  email           String   @unique @db.VarChar(254)
+  passwordHash    String   @db.VarChar(255)
+  name            String   @db.VarChar(80)
+  avatarUrl       String?  @db.VarChar(2048)
+  timezone        String   @default("UTC") @db.VarChar(64)
+  locale          String   @default("en-US") @db.VarChar(16)
+  emailVerifiedAt DateTime? @db.Timestamptz(3)
+  lastLoginAt     DateTime? @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  memberships  Membership[]
+  sessions     Session[]
+  transactions Transaction[] @relation("TransactionCreatedBy")
+  documents    Document[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  name         String   @db.VarChar(80)
+  baseCurrency String   @default("INR") @db.Char(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+
+  memberships  Membership[]
+  categories   Category[]
+  transactions Transaction[]
+  budgets      Budget[]
+  goals        Goal[]
+  documents    Document[]
+
+  @@map("workspaces")
+}
+
+model Membership {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  userId      String        @db.Uuid
+  workspaceId String        @db.Uuid
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@map("memberships")
+}
+
+/// Opaque refresh tokens are stored only as a keyed hash. A leaked database
+/// row therefore cannot be replayed as a session cookie.
+model Session {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique @db.VarChar(64)
+  userAgent  String?   @db.VarChar(512)
+  ipAddress  String?   @db.VarChar(64)
+  expiresAt  DateTime  @db.Timestamptz(3)
+  lastUsedAt DateTime  @default(now()) @db.Timestamptz(3)
+  revokedAt  DateTime? @db.Timestamptz(3)
+  rotatedAt  DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Categories are workspace-owned. System defaults can be renamed and
+/// recoloured but never deleted; custom categories must be unused to delete.
+model Category {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  workspaceId String       @db.Uuid
+  name        String       @db.VarChar(60)
+  kind        CategoryKind
+  color       String?      @db.VarChar(7)
+  icon        String?      @db.VarChar(40)
+  isSystem    Boolean      @default(false)
+  sortOrder   Int          @default(100)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(3)
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@unique([workspaceId, kind, name])
+  @@index([workspaceId, kind])
+  @@map("categories")
+}
+
+/// Ledger row. `amountMinor` is always positive; direction comes from `type`.
+/// Deleting a category keeps the history and leaves the row uncategorised.
+model Transaction {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  workspaceId String       @db.Uuid
+  categoryId  String?      @db.Uuid
+  createdById String?      @db.Uuid
+  type        CategoryKind
+  amountMinor BigInt
+  currency    String       @default("INR") @db.Char(3)
+  description String       @db.VarChar(160)
+  merchant    String?      @db.VarChar(120)
+  notes       String?      @db.VarChar(1000)
+  occurredAt  DateTime     @db.Timestamptz(3)
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  category  Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdBy User?     @relation("TransactionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, occurredAt])
+  @@index([workspaceId, type, occurredAt])
+  @@index([workspaceId, categoryId, occurredAt])
+  @@index([categoryId])
+  @@map("transactions")
+}
+
+/// One monthly envelope per expense category.
+model Budget {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @db.Uuid
+  categoryId  String   @db.Uuid
+  month       String   @db.Char(7)
+  amountMinor BigInt
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  category  Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, categoryId, month])
+  @@index([workspaceId, month])
+  @@map("budgets")
+}
+
+/// Savings target. Progress is derived from contributions, never stored.
+model Goal {
+  id                String     @id @default(uuid(7)) @db.Uuid
+  workspaceId       String     @db.Uuid
+  name              String     @db.VarChar(80)
+  targetAmountMinor BigInt
+  currency          String     @default("INR") @db.Char(3)
+  targetDate        DateTime?  @db.Date
+  status            GoalStatus @default(ACTIVE)
+  notes             String?    @db.VarChar(500)
+  createdAt         DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime   @updatedAt @db.Timestamptz(3)
+
+  workspace     Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contributions GoalContribution[]
+
+  @@index([workspaceId, status])
+  @@map("goals")
+}
+
+model GoalContribution {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  goalId      String   @db.Uuid
+  amountMinor BigInt
+  occurredAt  DateTime @db.Date
+  note        String?  @db.VarChar(300)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  goal Goal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([goalId, occurredAt])
+  @@map("goal_contributions")
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+model Document {
+  id          String         @id @default(uuid(7)) @db.Uuid
+  userId      String         @db.Uuid
+  workspaceId String         @db.Uuid
+  filename    String         @db.VarChar(255)
+  mimeType    String         @db.VarChar(127)
+  sizeBytes   Int
+  storageKey  String         @db.VarChar(255)
+  checksumSha256 String      @db.VarChar(64)
+  status      DocumentStatus @default(UPLOADED)
+  chunkCount  Int            @default(0)
+  error       String?        @db.VarChar(500)
+  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(3)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, checksumSha256])
+  @@index([userId, workspaceId])
+  @@index([workspaceId, status])
+  @@map("documents")
+}
